@@ -1,7 +1,7 @@
 import logging
 from enum import Enum
 from functools import partial
-from typing import Any, Dict, Iterable, List, NamedTuple, Tuple, TypeVar
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple, TypeVar, TypedDict, Union
 
 import grpc
 from google.protobuf import descriptor_pb2, descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
@@ -9,6 +9,10 @@ from google.protobuf.descriptor import MethodDescriptor, ServiceDescriptor
 from google.protobuf.descriptor_pb2 import ServiceDescriptorProto
 from google.protobuf.json_format import MessageToDict, ParseDict
 from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
+
+from .utils import load_data
+
+logger = logging.getLogger(__name__)
 
 
 class DescriptorImport:
@@ -28,19 +32,36 @@ def reflection_request(channel, requests):
         for resp in responses:
             yield resp
     except grpc._channel._Rendezvous as err:
-        print(err)
+        logger.exception(err)
+
+
+PathLikeString = str
+
+
+class CredentialsInfo(TypedDict):
+    root_certificates: Union[None,PathLikeString, bytes]
+    private_key: Union[None,PathLikeString, bytes]
+    certificate_chain: Union[None,PathLikeString, bytes]
 
 
 class BaseClient:
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, channel_options=None, ssl=False,
-                 compression=None, **kwargs):
+                 compression=None, credentials: Optional[CredentialsInfo] = None, **kwargs):
         self.endpoint = endpoint
-        self._symbol_db = symbol_db or _symbol_database.Default()
         self._desc_pool = descriptor_pool or _descriptor_pool.Default()
+        self._symbol_db = symbol_db or _symbol_database.Default()
         self.compression = compression
         self.channel_options = channel_options
         if ssl:
-            self._channel = grpc.secure_channel(endpoint, grpc.ssl_channel_credentials(), options=self.channel_options,
+            _credentials = {}
+            if credentials:
+                _credentials = {
+                    k: load_data(v) if isinstance(v, str) else v
+                    for k, v in credentials.items()
+                }
+
+            self._channel = grpc.secure_channel(endpoint, grpc.ssl_channel_credentials(**_credentials),
+                                                options=self.channel_options,
                                                 compression=self.compression)
         else:
             self._channel = grpc.insecure_channel(endpoint, options=self.channel_options, compression=self.compression)
@@ -59,24 +80,21 @@ class BaseClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
             self._channel._close()
-        except Exception:  # pylint: disable=bare-except
-            pass
+        except Exception as e:  # pylint: disable=bare-except
+            logger.warning('can not closed channel', exc_info=e)
         return False
 
     def __del__(self):
         if self._channel:
             try:
                 del self._channel
-            except Exception:  # pylint: disable=bare-except
-                pass
+            except Exception as e:  # pylint: disable=bare-except
+                logger.warning('can not delete channel', exc_info=e)
 
 
 def parse_request_data(reqeust_data, input_type):
     _data = reqeust_data or {}
-    if isinstance(_data, dict):
-        request = ParseDict(_data, input_type())
-    else:
-        request = _data
+    request = ParseDict(_data, input_type()) if isinstance(_data, dict) else _data
     return request
 
 

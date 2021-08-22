@@ -221,10 +221,10 @@ class BaseGrpcClient(BaseClient):
         return metadata
 
     def register_service(self, service_name):
-        logging.debug(f"start {service_name} register")
+        logger.debug(f"start {service_name} register")
         svc_desc = self._desc_pool.FindServiceByName(service_name)
         self._service_methods_meta[service_name] = self._register_methods(svc_desc)
-        logging.debug(f"end {service_name} register")
+        logger.debug(f"end {service_name} register")
 
     def register_all_service(self):
         for service in self.service_names:
@@ -348,24 +348,36 @@ class ReflectionClient(BaseGrpcClient):
         return descriptor_pb2.FileDescriptorProto.FromString(proto)
 
     def _register_file_descriptor(self, file_descriptor):
-        logging.debug(f"start {file_descriptor.name} register")
+        logger.debug(f"start {file_descriptor.name} register")
         dependencies = list(file_descriptor.dependency)
-        logging.debug(f"find {len(dependencies)} dependency in {file_descriptor.name}")
+        logger.debug(f"find {len(dependencies)} dependency in {file_descriptor.name}")
         for dep_file_name in dependencies:
             if dep_file_name not in self.registered_file_names:
                 dep_desc = self._get_file_descriptor_by_name(dep_file_name)
                 self._register_file_descriptor(dep_desc)
                 self.registered_file_names.add(dep_file_name)
             else:
-                logging.debug(f'{dep_file_name} already registered')
+                logger.debug(f'{dep_file_name} already registered')
 
         self._desc_pool.Add(file_descriptor)
-        logging.debug(f"end {file_descriptor.name} register")
+        logger.debug(f"end {file_descriptor.name} register")
 
     def register_service(self, service_name):
-        logging.debug(f"start {service_name} register")
-        file_descriptor = self._get_file_descriptor_by_symbol(service_name)
-        self._register_file_descriptor(file_descriptor)
+        logger.debug(f"start {service_name} register")
+        try:
+            self._desc_pool.FindServiceByName(service_name)
+            is_registered = True
+        except KeyError:
+            is_registered = False
+        if not is_registered:
+            try:
+                file_descriptor = self._get_file_descriptor_by_symbol(service_name)
+                self._register_file_descriptor(file_descriptor)
+            except Exception as e:
+                logger.warning(f"registered {service_name} failed, may be already registered", exc_info=e)
+            logger.debug(f"end {service_name} register")
+        else:
+            logger.debug(f"{service_name} is already register")
         super(ReflectionClient, self).register_service(service_name)
 
 

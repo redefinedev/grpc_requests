@@ -1,6 +1,7 @@
+from .app import app
 from ..testcase import RealServerTestCase
 from ...grpc_requests import Client
-from .app import app
+
 
 class CertificateTestCase(RealServerTestCase):
     app = app
@@ -9,7 +10,6 @@ class CertificateTestCase(RealServerTestCase):
     tls = True
 
     def test_success_request(self):
-        print('tls_config', self.tls_config)
         client = Client(self.default_endpoint, ssl=True, credentials=dict(
             root_certificates=self.tls_config['certificate'],
         ))

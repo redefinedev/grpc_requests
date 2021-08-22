@@ -1,7 +1,8 @@
 import logging
+import sys
 from enum import Enum
 from functools import partial
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple, TypeVar, TypedDict, Union
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple, TypeVar, Union
 
 import grpc
 from google.protobuf import descriptor_pb2, descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
@@ -12,6 +13,10 @@ from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
 
 from .utils import load_data
 
+if sys.version_info >= (3, 8):
+    from typing import TypedDict  # pylint: disable=no-name-in-module
+else:
+    from typing_extensions import TypedDict
 logger = logging.getLogger(__name__)
 
 
@@ -39,9 +44,9 @@ PathLikeString = str
 
 
 class CredentialsInfo(TypedDict):
-    root_certificates: Union[None,PathLikeString, bytes]
-    private_key: Union[None,PathLikeString, bytes]
-    certificate_chain: Union[None,PathLikeString, bytes]
+    root_certificates: Union[None, PathLikeString, bytes]
+    private_key: Union[None, PathLikeString, bytes]
+    certificate_chain: Union[None, PathLikeString, bytes]
 
 
 class BaseClient:

@@ -1,7 +1,7 @@
 import logging
 from enum import Enum
 from functools import partial
-from typing import Any, AsyncIterable, Dict, Iterable, List, NamedTuple, Tuple, TypeVar
+from typing import Any, AsyncIterable, Dict, Iterable, List, NamedTuple, Optional, Tuple, TypeVar
 
 import grpc
 from google.protobuf import descriptor_pb2, descriptor_pool as _descriptor_pool, symbol_database as _symbol_database
@@ -9,6 +9,10 @@ from google.protobuf.descriptor import MethodDescriptor, ServiceDescriptor
 from google.protobuf.descriptor_pb2 import ServiceDescriptorProto
 from google.protobuf.json_format import MessageToDict, ParseDict
 from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
+
+from .client import CredentialsInfo
+from .utils import load_data
+logger = logging.getLogger(__name__)
 
 
 class DescriptorImport:
@@ -33,14 +37,21 @@ def reflection_request(channel, requests):
 
 class BaseAsyncClient:
     def __init__(self, endpoint, symbol_db=None, descriptor_pool=None, channel_options=None, ssl=False,
-                 compression=None, **kwargs):
+                 compression=None, credentials: Optional[CredentialsInfo] = None, **kwargs):
         self.endpoint = endpoint
         self._symbol_db = symbol_db or _symbol_database.Default()
         self._desc_pool = descriptor_pool or _descriptor_pool.Default()
         self.compression = compression
         self.channel_options = channel_options
         if ssl:
-            self._channel = grpc.aio.secure_channel(endpoint, grpc.ssl_channel_credentials(),
+            _credentials = {}
+            if credentials:
+                _credentials = {
+                    k: load_data(v) if isinstance(v, str) else v
+                    for k, v in credentials.items()
+                }
+
+            self._channel = grpc.aio.secure_channel(endpoint, grpc.ssl_channel_credentials(**_credentials),
                                                     options=self.channel_options,
                                                     compression=self.compression)
         else:
@@ -203,10 +214,10 @@ class BaseAsyncGrpcClient(BaseAsyncClient):
         return metadata
 
     async def register_service(self, service_name):
-        logging.debug(f"start {service_name} register")
+        logger.debug(f"start {service_name} register")
         svc_desc = self._desc_pool.FindServiceByName(service_name)
         self._service_methods_meta[service_name] = self._register_methods(svc_desc)
-        logging.debug(f"end {service_name} register")
+        logger.debug(f"end {service_name} register")
 
     async def register_all_service(self):
         for service in await self.service_names():
@@ -329,24 +340,36 @@ class ReflectionAsyncClient(BaseAsyncGrpcClient):
         return descriptor_pb2.FileDescriptorProto.FromString(proto)
 
     async def _register_file_descriptor(self, file_descriptor):
-        logging.debug(f"start {file_descriptor.name} register")
+        logger.debug(f"start {file_descriptor.name} register")
         dependencies = list(file_descriptor.dependency)
-        logging.debug(f"find {len(dependencies)} dependency in {file_descriptor.name}")
+        logger.debug(f"find {len(dependencies)} dependency in {file_descriptor.name}")
         for dep_file_name in dependencies:
             if dep_file_name not in self.registered_file_names:
                 dep_desc = await self._get_file_descriptor_by_name(dep_file_name)
                 await self._register_file_descriptor(dep_desc)
                 self.registered_file_names.add(dep_file_name)
             else:
-                logging.debug(f'{dep_file_name} already registered')
+                logger.debug(f'{dep_file_name} already registered')
 
         self._desc_pool.Add(file_descriptor)
-        logging.debug(f"end {file_descriptor.name} register")
+        logger.debug(f"end {file_descriptor.name} register")
 
     async def register_service(self, service_name):
-        logging.debug(f"start {service_name} register")
-        file_descriptor = await self._get_file_descriptor_by_symbol(service_name)
-        await self._register_file_descriptor(file_descriptor)
+        logger.debug(f"start {service_name} register")
+        try:
+            self._desc_pool.FindServiceByName(service_name)
+            is_registered = True
+        except KeyError:
+            is_registered = False
+        if not is_registered:
+            try:
+                file_descriptor = await self._get_file_descriptor_by_symbol(service_name)
+                await self._register_file_descriptor(file_descriptor)
+            except Exception as e:
+                logger.warning(f"registered {service_name} failed, may be already registered", exc_info=e)
+            logger.debug(f"end {service_name} register")
+        else:
+            logger.debug(f"{service_name} is already register")
         await super(ReflectionAsyncClient, self).register_service(service_name)
 
 
